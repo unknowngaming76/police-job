@@ -1,5 +1,10 @@
 local sharedConfig = require 'config.shared'
 
+local function isOnDutyLeo()
+    local job = QBX.PlayerData.job
+    return job and job.type == 'leo' and job.onduty
+end
+
 local function checkIsSpikeObject(spikeStrips, fixedCoords, position, maxDistance)
     if #spikeStrips == 0 then return end
     for i = 1, #spikeStrips do
@@ -35,6 +40,15 @@ local function getClosestObject(objects, position, maxDistance, isFixed)
     end
 
     return currentIndex
+end
+
+local function getObjectIndexByNetId(objects, netId)
+    if not netId then return end
+    for i = 1, #objects do
+        if objects[i] == netId then
+            return i
+        end
+    end
 end
 
 ---Spawn police object.
@@ -76,9 +90,11 @@ RegisterNetEvent('police:client:spawnPObj', function(item)
     end
 end)
 
-RegisterNetEvent('police:client:deleteObject', function()
-    local objectId = getClosestObject(GlobalState.policeObjects, GetEntityCoords(cache.ped) , 5.0)
+local function removePoliceObject(objectId)
+    if not isOnDutyLeo() then return end
+    if cache.vehicle then return end
     if not objectId then return end
+
     if lib.progressBar({
         duration = 2500,
         label = locale('progressbar.remove_object'),
@@ -96,9 +112,18 @@ RegisterNetEvent('police:client:deleteObject', function()
         }
     }) then
         TriggerServerEvent('police:server:despawnObject', objectId)
-    else
-        exports.qbx_core:Notify(locale('error.canceled'), 'error')
+        return true
     end
+
+    exports.qbx_core:Notify(locale('error.canceled'), 'error')
+end
+
+RegisterNetEvent('police:client:deleteObject', function(netId)
+    local coords = GetEntityCoords(cache.ped)
+    local objectId = getObjectIndexByNetId(GlobalState.policeObjects, netId)
+        or getClosestObject(GlobalState.policeObjects, coords, 5.0)
+
+    removePoliceObject(objectId)
 end)
 
 ---Spawn a spike strip.
@@ -207,6 +232,43 @@ local function burstTyreOnSpikeCollision(vehicle)
     end)
 end
 
+local function removeSpikeStrip(spikeId)
+    if not isOnDutyLeo() then return end
+    if cache.vehicle then return end
+    if not spikeId then return end
+
+    if lib.progressBar({
+        duration = 2500,
+        label = locale('progressbar.remove_object'),
+        useWhileDead = false,
+        canCancel = true,
+        disable = {
+            car = true,
+            move = true,
+            combat = true,
+            mouse = false
+        },
+        anim = {
+            dict = 'weapons@first_person@aim_rng@generic@projectile@thermal_charge@',
+            clip = 'plant_floor'
+        }
+    }) then
+        TriggerServerEvent('police:server:despawnSpikeStrip', spikeId)
+        lib.hideTextUI()
+        return true
+    end
+
+    exports.qbx_core:Notify(locale('error.canceled'), 'error')
+end
+
+RegisterNetEvent('police:client:PickupSpikeStrip', function(netId)
+    local coords = GetEntityCoords(cache.ped)
+    local spike = getObjectIndexByNetId(GlobalState.spikeStrips, netId)
+        or getClosestObject(GlobalState.spikeStrips, coords, 4, true)
+
+    removeSpikeStrip(spike)
+end)
+
 local function displayInfoCloseToSpike()
     CreateThread(function ()
         pcall(lib.waitFor(function() return cache.value and nil or false end, nil, sharedConfig.timeout))
@@ -241,27 +303,7 @@ local function onPressed()
     keybind:disable(true)
     local spike = getClosestObject(GlobalState.spikeStrips, GetEntityCoords(cache.ped), 4, true)
     if spike ~= nil then
-        if lib.progressBar({
-            duration = 2500,
-            label = locale('progressbar.remove_object'),
-            useWhileDead = false,
-            canCancel = true,
-            disable = {
-                car = true,
-                move = true,
-                combat = true,
-                mouse = false
-            },
-            anim = {
-                dict = 'weapons@first_person@aim_rng@generic@projectile@thermal_charge@',
-                clip = 'plant_floor'
-            }
-        }) then
-            TriggerServerEvent('police:server:despawnSpikeStrip', spike)
-            lib.hideTextUI()
-        else
-            exports.qbx_core:Notify(locale('error.canceled'), 'error')
-        end
+        removeSpikeStrip(spike)
     end
     keybind:disable(false)
 end

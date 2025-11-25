@@ -25,6 +25,9 @@ Police Job for QBOX :police_officer:
 - Police radar
 - Handcuff as an item (Can used via command too. Check Commands section.)
 - Emergency services can see each other on map
+- Cuff and soft cuff suspects directly through ox_target third-eye options.
+- Deploy spike strips with the `spikestrip` inventory item and reclaim them through ox_target or the clean-up radial menu.
+- Clear placeable police props with ox_target or the clean-up radial menu.
 
 ### Commands
 - /spikestrip - Places spike strip on ground.
