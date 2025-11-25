@@ -68,15 +68,6 @@ exports.qbx_core:CreateUseableItem('handcuffs', function(source)
     TriggerClientEvent('police:client:CuffPlayerSoft', source)
 end)
 
-exports.qbx_core:CreateUseableItem('spikestrip', function(source)
-    local player = exports.qbx_core:GetPlayer(source)
-    if not player or not IsLeoAndOnDuty(player) then
-        return exports.qbx_core:Notify(source, locale('error.on_duty_police_only'), 'error')
-    end
-
-    TriggerClientEvent('police:client:SpawnSpikeStrip', source)
-end)
-
 exports.qbx_core:CreateUseableItem('moneybag', function(source, item)
     if not item.info or item.info == '' then return end
     local player = exports.qbx_core:GetPlayer(source)
