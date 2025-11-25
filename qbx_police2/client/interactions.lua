@@ -102,10 +102,27 @@ end)
 
 ---Check for closest player within distance or 2.5 units
 ---@param distance number?
+---@param serverId number?
 ---@return number? playerId
 ---@return number? playerPed
-local function getClosestPlayer(distance)
+local function getClosestPlayer(distance, serverId)
     local coords = GetEntityCoords(cache.ped)
+    local targetId, targetPed
+
+    if serverId then
+        targetId = GetPlayerFromServerId(serverId)
+        if not targetId or targetId == -1 then
+            return exports.qbx_core:Notify(locale('error.none_nearby'), 'error')
+        end
+
+        targetPed = GetPlayerPed(targetId)
+        if #(coords - GetEntityCoords(targetPed)) > (distance or 2.5) then
+            return exports.qbx_core:Notify(locale('error.none_nearby'), 'error')
+        end
+
+        return targetId, targetPed
+    end
+
     local player, playerPed = lib.getClosestPlayer(coords, distance or 2.5)
     if not player then
         return exports.qbx_core:Notify(locale('error.none_nearby'), 'error')
@@ -231,9 +248,9 @@ RegisterNetEvent('police:client:KidnapPlayer', function()
     TriggerServerEvent('police:server:KidnapPlayer', playerId)
 end)
 
-RegisterNetEvent('police:client:CuffPlayerSoft', function()
+RegisterNetEvent('police:client:CuffPlayerSoft', function(targetServerId)
     if IsPedRagdoll(cache.ped) then return end
-    local player, playerPed = getClosestPlayer(1.5)
+    local player, playerPed = getClosestPlayer(1.5, targetServerId)
     if not player or not playerPed then return end
     local playerId = GetPlayerServerId(player)
 
@@ -246,9 +263,9 @@ RegisterNetEvent('police:client:CuffPlayerSoft', function()
     end
 end)
 
-RegisterNetEvent('police:client:CuffPlayer', function()
+RegisterNetEvent('police:client:CuffPlayer', function(targetServerId)
     if IsPedRagdoll(cache.ped) then return end
-    local player, playerPed = getClosestPlayer()
+    local player, playerPed = getClosestPlayer(nil, targetServerId)
     if not player or not playerPed then return end
 
     if exports.ox_inventory:Search('count', config.handcuffItems) == 0 then
