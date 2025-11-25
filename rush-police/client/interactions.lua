@@ -20,6 +20,39 @@ local function getClosestPlayer(distance)
     return player, playerPed
 end
 
+local function resolvePlayer(targetPlayerId, distance)
+    if targetPlayerId then
+        local player = GetPlayerFromServerId(targetPlayerId)
+        if player == -1 then return end
+        return targetPlayerId, GetPlayerPed(player)
+    end
+
+    local closestPlayer, closestPlayerPed = getClosestPlayer(distance)
+    if not closestPlayer then return end
+    return GetPlayerServerId(closestPlayer), closestPlayerPed
+end
+
+local function isSelfAvailable()
+    if isEscorted or isHandcuffed then return false end
+    if exports['osp_ambulance']:IsKnockedOut() then return false end
+    if exports['osp_ambulance']:IsDead() then return false end
+    return true
+end
+
+local function withinDistance(targetPed, distance)
+    if not targetPed then return false end
+    local maxDistance = distance or 2.5
+    local coords = GetEntityCoords(cache.ped)
+    return #(coords - GetEntityCoords(targetPed)) <= maxDistance
+end
+
+local function serverIdFromEntity(entity)
+    if not entity then return end
+    local playerIndex = NetworkGetPlayerIndexFromPed(entity)
+    if not playerIndex or playerIndex == -1 then return end
+    return GetPlayerServerId(playerIndex), GetPlayerPed(playerIndex)
+end
+
 local function handCuffAnimation()
     lib.requestAnimDict('mp_arrest_paired', 100)
     Wait(100)
@@ -143,7 +176,7 @@ local function handcuffedEscorted()
 
     sleep = 0
     handcuffActions()
-    if exports['rush-ems']:IsDead() then return sleep end
+    if exports['osp_ambulance']:IsDead() then return sleep end
     for i = 1, #anim do
         if IsEntityPlayingAnim(cache.ped, anim[i].dict, anim[i].anim, 3) then return 0 end
     end
@@ -161,11 +194,10 @@ local function makeBusy()
     end)
 end
 
-local function playerCheck()
-    if isEscorted or isHandcuffed then return end
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) then return end
-    if exports['rush-ems']:IsKnockedOut() then return end
-    if exports['rush-ems']:IsDead() then return end
+local function playerCheck(playerPed)
+    if not playerPed then return end
+    if not isSelfAvailable() then return end
+    if IsPedInAnyVehicle(playerPed, false) then return end
     return true
 end
 
@@ -186,20 +218,18 @@ function interactions.getCuffed()
     ClearPedTasksImmediately(ped)
 end
 
-function interactions.unseatFromVehicle()
+function interactions.unseatFromVehicle(targetPlayerId)
     if IsPedRagdoll(cache.ped) then return end
+    if not isSelfAvailable() then return end
 
-    local player = getClosestPlayer()
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local playerId = GetPlayerServerId(player)
     local vehicle = lib.getClosestVehicle(GetEntityCoords(cache.ped), 5, false)
     if not vehicle then return end
 
-    if isEscorted or isHandcuffed then return end
-    if not IsPedInAnyVehicle(GetPlayerPed(player), false) then return end
-    if exports['rush-ems']:IsKnockedOut() then return end
-    if exports['rush-ems']:IsDead() then return end
+    if not IsPedInAnyVehicle(playerPed, false) then return end
 
     QBCore.Functions.Progressbar("interaction_unseat", "Unseating From Vehicle", 3500, false, true, {
         disableMovement = true,
@@ -235,64 +265,60 @@ end)
 
 -- Events
 
-RegisterNetEvent('police:client:CuffPlayerSoft', function()
-    if IsPedRagdoll(cache.ped) then return end
-    if busy then return end
+RegisterNetEvent('police:client:CuffPlayerSoft', function(targetPlayerId)
+    if IsPedRagdoll(cache.ped) or busy then return end
+    if not isSelfAvailable() then return end
 
-    local player = getClosestPlayer(1.5)
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId, 1.5)
+    if not playerId or not playerPed then return end
+    if not withinDistance(playerPed, 2.5) then return end
     if exports.ox_inventory:Search('count', 'handcuffs') == 0 then
         QBCore.Functions.Notify('No handcuffs', 'error')
         return
     end
 
-    if isEscorted or isHandcuffed then return end
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) or cache.vehicle then return end
+    if IsPedInAnyVehicle(playerPed, false) or cache.vehicle then return end
     makeBusy()
 
-    local playerId = GetPlayerServerId(player)
     TriggerServerEvent('brazzers-police:server:cuffPlayer', playerId)
     handCuffAnimation()
 end)
 
-RegisterNetEvent('police:client:unCuffPlayer', function()
-    if IsPedRagdoll(cache.ped) then return end
-    if busy then return end
+RegisterNetEvent('police:client:unCuffPlayer', function(targetPlayerId)
+    if IsPedRagdoll(cache.ped) or busy then return end
+    if not isSelfAvailable() then return end
 
-    local player = getClosestPlayer(1.5)
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId, 1.5)
+    if not playerId or not playerPed then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local playerId = GetPlayerServerId(player)
-    if isEscorted or isHandcuffed then return end
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) or cache.vehicle then return end
+    if IsPedInAnyVehicle(playerPed, false) or cache.vehicle then return end
 
     local result = lib.callback.await('brazzers-police:server:handcuffStatus', false, playerId)
     if not result then return end
-    
+
     makeBusy()
     unhandCuffAnimation()
     TriggerServerEvent('brazzers-police:server:uncuffPlayer', playerId)
 end)
 
-RegisterNetEvent('police:client:PutPlayerInVehicle', function()
+RegisterNetEvent('police:client:PutPlayerInVehicle', function(targetPlayerId)
     if IsPedRagdoll(cache.ped) then return end
+    if not isSelfAvailable() then return end
 
-    local player = getClosestPlayer()
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) then
-        interactions.unseatFromVehicle()
+    if IsPedInAnyVehicle(playerPed, false) then
+        interactions.unseatFromVehicle(playerId)
         return
     end
 
-    local playerId = GetPlayerServerId(player)
     local vehicle = lib.getClosestVehicle(GetEntityCoords(cache.ped), 5, false)
     if not vehicle then return end
 
-    if isEscorted or isHandcuffed then return end
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) or cache.vehicle then return end
-    if exports['rush-ems']:IsKnockedOut() then return end
-    if exports['rush-ems']:IsDead() then return end
+    if IsPedInAnyVehicle(playerPed, false) or cache.vehicle then return end
 
     QBCore.Functions.Progressbar("interaction_seat", "Seating Inside Vehicle", 3500, false, true, {
         disableMovement = true,
@@ -306,30 +332,24 @@ RegisterNetEvent('police:client:PutPlayerInVehicle', function()
     end)
 end)
 
-RegisterNetEvent('police:client:EscortPlayer', function()
+RegisterNetEvent('police:client:EscortPlayer', function(targetPlayerId)
     if IsPedRagdoll(cache.ped) then return end
+    if not isSelfAvailable() then return end
 
-    local player = getClosestPlayer()
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local playerId = GetPlayerServerId(player)
-
-    if isEscorted or isHandcuffed then return end
-    if IsPedInAnyVehicle(GetPlayerPed(player), false) or cache.vehicle then return end
-    if exports['rush-ems']:IsKnockedOut() then return end
-    if exports['rush-ems']:IsDead() then return end
+    if IsPedInAnyVehicle(playerPed, false) or cache.vehicle then return end
 
     TriggerServerEvent('brazzers-police:server:escortPlayer', playerId)
 end)
 
-RegisterNetEvent('brazzers-police:client:friskPlayer', function()
-    local player = getClosestPlayer()
-    if not player then return end
-
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
+RegisterNetEvent('brazzers-police:client:friskPlayer', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
     TriggerEvent('animations:client:EmoteCommandStart', { "frisk" })
     QBCore.Functions.Progressbar("patting_down", "Patting Down", math.random(5000, 7500), false, true, {
@@ -345,14 +365,12 @@ RegisterNetEvent('brazzers-police:client:friskPlayer', function()
     end)
 end)
 
-RegisterNetEvent('brazzers-police:client:fingerprintPlayer', function()
-    local player = getClosestPlayer()
-    if not player then return end
+RegisterNetEvent('brazzers-police:client:fingerprintPlayer', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     TriggerEvent('animations:client:EmoteCommandStart', { "texting" })
     QBCore.Functions.Progressbar("patting_down", "Scanning Print", math.random(5000, 7500), false, true, {
         disableMovement = true,
@@ -367,48 +385,40 @@ RegisterNetEvent('brazzers-police:client:fingerprintPlayer', function()
     end)
 end)
 
-RegisterNetEvent('police:client:SearchPlayer', function()
-    local player = getClosestPlayer()
-    if not player then return end
+RegisterNetEvent('police:client:SearchPlayer', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     exports.ox_inventory:openInventory('player', playerId)
     TriggerServerEvent("police:server:SearchPlayer", playerId)
 end)
 
-RegisterNetEvent('police:client:SeizePossessions', function()
-    local player = getClosestPlayer()
-    if not player then return end
+RegisterNetEvent('police:client:SeizePossessions', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     TriggerServerEvent("police:server:SeizePossessions", playerId)
 end)
 
-RegisterNetEvent('police:client:SeizeCash', function()
-    local player = getClosestPlayer()
-    if not player then return end
+RegisterNetEvent('police:client:SeizeCash', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     TriggerServerEvent("police:server:SeizeCash", playerId)
 end)
 
-RegisterNetEvent('police:client:checkBank', function()
-    local player = getClosestPlayer()
-    if not player then return end
+RegisterNetEvent('police:client:checkBank', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     TriggerServerEvent("police:server:checkBank", playerId)
 end)
 
@@ -422,16 +432,14 @@ RegisterNetEvent('escorting:client:player', function(bool)
     escorting = bool
 end)
 
-RegisterNetEvent('police:unmask', function()
+RegisterNetEvent('police:unmask', function(targetPlayerId)
     local AnimSet, AnimationOn = "mp_missheist_ornatebank", "stand_cash_in_bag_intro"
 
-    local player = getClosestPlayer()
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerId = GetPlayerServerId(player)
     TriggerServerEvent("brazzers-police:server:unmask", playerId)
     lib.requestAnimDict(AnimSet, 100)
     TaskPlayAnim(cache.ped, AnimSet, AnimationOn, 8.0, -8, -1, 49, 0, 0, 0, 0)
@@ -439,27 +447,24 @@ RegisterNetEvent('police:unmask', function()
     ClearPedTasks(cache.ped)
 end)
 
-RegisterNetEvent('police:takeoffShoes', function()
+RegisterNetEvent('police:takeoffShoes', function(targetPlayerId)
     local AnimSet, AnimationOn = "mp_missheist_ornatebank", "stand_cash_in_bag_intro"
 
-    local player = getClosestPlayer()
-    if not player then return end
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerPed = GetPlayerPed(player)
-    local playerId = GetPlayerServerId(player)
     local shoeType = GetPedDrawableVariation(playerPed, 6)
 
     if GetEntityModel(playerPed) == GetHashKey('mp_f_freemode_01') then
         if shoeType == 35 then return end
     end
 
-    if GetEntityModel(playerPed) == GetHashKey('mp_m_freemode_01') then 
-        if shoeType == 34 then return end 
+    if GetEntityModel(playerPed) == GetHashKey('mp_m_freemode_01') then
+        if shoeType == 34 then return end
     end
- 
+
     TriggerServerEvent('brazzers-police:server:takeoffShoes', playerId)
     lib.requestAnimDict(AnimSet, 100)
     TaskPlayAnim(cache.ped, AnimSet, AnimationOn, 8.0, -8, -1, 49, 0, 0, 0, 0)
@@ -467,15 +472,11 @@ RegisterNetEvent('police:takeoffShoes', function()
     ClearPedTasks(cache.ped)
 end)
 
-RegisterNetEvent('police:client:RobPlayer', function()
-    local player = getClosestPlayer()
-    if not player then return end
-
-    local allowed = playerCheck()
-    if not allowed then return end
-
-    local playerPed = GetPlayerPed(player)
-    local playerId = GetPlayerServerId(player)
+RegisterNetEvent('police:client:RobPlayer', function(targetPlayerId)
+    local playerId, playerPed = resolvePlayer(targetPlayerId)
+    if not playerId or not playerPed then return end
+    if not playerCheck(playerPed) then return end
+    if not withinDistance(playerPed, 2.5) then return end
 
     QBCore.Functions.Progressbar("robbing_player", 'Robbing Person...', 12000, false, true, {
         disableMovement = true,
@@ -490,8 +491,7 @@ RegisterNetEvent('police:client:RobPlayer', function()
         local plyCoords = GetEntityCoords(playerPed)
         local pos = GetEntityCoords(cache.ped)
 
-        local allowed = playerCheck()
-        if not allowed then return end
+        if not playerCheck(playerPed) then return end
 
         if #(pos - plyCoords) < 2.5 then
             StopAnimTask(ped, "random@shop_robbery", "robbery_action_b", 1.0)
@@ -510,8 +510,8 @@ end)
 lib.callback.register('brazzers-police:client:cuffPlayer', function(police)
     local retval = false
 
-    if exports['rush-ems']:IsKnockedOut() then interactions.getCuffed() return true end
-    if exports['rush-ems']:IsDead() then interactions.getCuffed() return true end
+    if exports['osp_ambulance']:IsKnockedOut() then interactions.getCuffed() return true end
+    if exports['osp_ambulance']:IsDead() then interactions.getCuffed() return true end
     if isHandcuffed then interactions.getCuffed() return true end
 
     local difficulty = ((attempts > 3) and 1) or Config.Difficulty[attempts]
@@ -592,7 +592,7 @@ lib.callback.register('brazzers-police:client:seatInVehicle', function()
 end)
 
 lib.callback.register('brazzers-police:client:unseatFromVehicle', function(playerId, cop)
-    if not exports['rush-ems']:IsKnockedOut() and not exports['rush-ems']:IsDead() and not isHandcuffed then return end
+    if not exports['osp_ambulance']:IsKnockedOut() and not exports['osp_ambulance']:IsDead() and not isHandcuffed then return end
     if not cache.vehicle then return end
     TaskLeaveVehicle(cache.ped, cache.vehicle, 16)
 
@@ -626,7 +626,7 @@ lib.callback.register('brazzers-police:client:unmask', function(playerId)
 end)
 
 lib.callback.register('brazzers-police:client:takeoffShoes', function(playerId)
-    if not IsEntityPlayingAnim(cache.ped, "missminuteman_1ig_2", "handsup_base", 3) and not IsEntityPlayingAnim(cache.ped, "mp_arresting", "idle", 3) and not IsEntityPlayingAnim(cache.ped, "switch@trevor@annoys_sunbathers", "trev_annoys_sunbathers_loop_guy", 3) and not exports['rush-ems']:IsDead() and not exports['rush-ems']:IsKnockedOut() then return end
+    if not IsEntityPlayingAnim(cache.ped, "missminuteman_1ig_2", "handsup_base", 3) and not IsEntityPlayingAnim(cache.ped, "mp_arresting", "idle", 3) and not IsEntityPlayingAnim(cache.ped, "switch@trevor@annoys_sunbathers", "trev_annoys_sunbathers_loop_guy", 3) and not exports['osp_ambulance']:IsDead() and not exports['osp_ambulance']:IsKnockedOut() then return end
     
     lib.requestAnimDict('missheist_agency2ahelmet', 100)
     TaskPlayAnim(cache.ped, "missheist_agency2ahelmet", "take_off_helmet_stand", 4.0, 3.0, -1, 49, 1.0, 0, 0, 0)
@@ -678,6 +678,229 @@ CreateThread(function()
     while true do
         Wait(handcuffedEscorted())
     end
+end)
+
+CreateThread(function()
+    exports.ox_target:addGlobalPlayer({
+        {
+            name = 'interactions:cuff',
+            icon = 'fa-solid fa-handcuffs',
+            label = 'Handcuff',
+            canInteract = function(entity, distance)
+                if not (isPolice() or isEMS()) then return end
+                if busy or not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+
+                return exports.ox_inventory:Search('count', 'handcuffs') > 0
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:CuffPlayerSoft', serverId)
+            end
+        },
+        {
+            name = 'interactions:uncuff',
+            icon = 'fa-solid fa-key',
+            label = 'Uncuff',
+            canInteract = function(entity, distance)
+                if not (isPolice() or isEMS()) then return end
+                if busy or not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                return withinDistance(playerPed, 2.5)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:unCuffPlayer', serverId)
+            end
+        },
+        {
+            name = 'interactions:escort',
+            icon = 'fa-solid fa-person-walking',
+            label = 'Escort',
+            canInteract = function(entity, distance)
+                if not (isPolice() or isEMS()) then return end
+                if busy or not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                if IsPedInAnyVehicle(playerPed, false) then return end
+                return true
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:EscortPlayer', serverId)
+            end
+        },
+        {
+            name = 'interactions:seatplayer',
+            icon = 'fa-solid fa-chair',
+            label = 'Seat In Vehicle',
+            canInteract = function(entity, distance)
+                if not (isPolice() or isEMS()) then return end
+                if busy or not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return true
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:PutPlayerInVehicle', serverId)
+            end
+        },
+        {
+            name = 'interactions:unseatplayer',
+            icon = 'fa-solid fa-arrow-right-from-bracket',
+            label = 'Remove From Vehicle',
+            canInteract = function(entity, distance)
+                if not (isPolice() or isEMS()) then return end
+                if busy or not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return IsPedInAnyVehicle(playerPed, false)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                interactions.unseatFromVehicle(serverId)
+            end
+        },
+        {
+            name = 'interactions:frisk',
+            icon = 'fa-solid fa-user-check',
+            label = 'Frisk',
+            canInteract = function(entity, distance)
+                if not isPolice() then return end
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return not IsPedInAnyVehicle(playerPed, false)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('brazzers-police:client:friskPlayer', serverId)
+            end
+        },
+        {
+            name = 'interactions:search',
+            icon = 'fa-solid fa-magnifying-glass',
+            label = 'Search',
+            canInteract = function(entity, distance)
+                if not isPolice() then return end
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return not IsPedInAnyVehicle(playerPed, false)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:SearchPlayer', serverId)
+            end
+        },
+        {
+            name = 'interactions:seize',
+            icon = 'fa-solid fa-box-archive',
+            label = 'Seize Possessions',
+            canInteract = function(entity, distance)
+                if not isPolice() then return end
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return true
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:SeizePossessions', serverId)
+            end
+        },
+        {
+            name = 'interactions:seizecash',
+            icon = 'fa-solid fa-money-bill',
+            label = 'Seize Cash',
+            canInteract = function(entity, distance)
+                if not isPolice() then return end
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                if not withinDistance(playerPed, 2.5) then return end
+                return true
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:SeizeCash', serverId)
+            end
+        },
+        {
+            name = 'interactions:checkbank',
+            icon = 'fa-solid fa-building-columns',
+            label = 'Check Bank',
+            canInteract = function(entity, distance)
+                if not isPolice() then return end
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                return withinDistance(playerPed, 2.5)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:checkBank', serverId)
+            end
+        },
+        {
+            name = 'interactions:rob',
+            icon = 'fa-solid fa-sack-dollar',
+            label = 'Rob',
+            canInteract = function(entity, distance)
+                if not isSelfAvailable() then return end
+                if (distance or 0) > 2.5 then return end
+
+                local serverId, playerPed = serverIdFromEntity(entity)
+                if not serverId or not playerPed then return end
+                return withinDistance(playerPed, 2.5)
+            end,
+            onSelect = function(data)
+                local serverId = serverIdFromEntity(data.entity)
+                if not serverId then return end
+                TriggerEvent('police:client:RobPlayer', serverId)
+            end
+        },
+    })
 end)
 
 CreateThread(function()
